@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -198,37 +199,40 @@ func TestParseDates(t *testing.T) {
 	}
 }
 
-func TestGetLatestDate(t *testing.T) {
-	tmpDir, err := os.MkdirTemp("", "data")
+func TestDedupeFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "dedupe_test")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(tmpDir)
 
-	csvPath := tmpDir + "/AAPL.csv"
+	csvPath := filepath.Join(tmpDir, "TEST.csv")
+	content := "Date,Open,High,Low,Close,Volume\n" +
+		"2021-04-01,100,105,95,102,1000\n" +
+		"2021-04-02,103,106,101,104,1100\n" +
+		"2021-04-02,103,106,101,104,1100\n" + // Duplicate
+		"2021-04-03,105,108,104,107,1200\n"
 
-	// Test with non-existent file
-	latest, err := GetLatestDate(csvPath)
-	if err != nil {
-		t.Errorf("expected no error for non-existent file, got %v", err)
-	}
-	if !latest.IsZero() {
-		t.Errorf("expected zero time for non-existent file, got %v", latest)
-	}
-
-	// Test with existing file
-	content := "Date,Open,High,Low,Close,Volume\n2021-04-01,100,105,95,102,1000\n2021-04-02,103,106,101,104,1100\n"
 	if err := os.WriteFile(csvPath, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
-	latest, err = GetLatestDate(csvPath)
-	if err != nil {
-		t.Errorf("GetLatestDate failed: %v", err)
+	if err := dedupeFile(csvPath); err != nil {
+		t.Errorf("dedupeFile failed: %v", err)
 	}
-	expected := "2021-04-02"
-	if latest.Format("2006-01-02") != expected {
-		t.Errorf("expected %s, got %s", expected, latest.Format("2006-01-02"))
+
+	newContent, err := os.ReadFile(csvPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	expectedContent := "Date,Open,High,Low,Close,Volume\n" +
+		"2021-04-01,100,105,95,102,1000\n" +
+		"2021-04-02,103,106,101,104,1100\n" +
+		"2021-04-03,105,108,104,107,1200\n"
+
+	if string(newContent) != expectedContent {
+		t.Errorf("expected content:\n%q\ngot:\n%q", expectedContent, string(newContent))
 	}
 }
 
@@ -238,29 +242,31 @@ func TestFetchTickerDataFilterExisting(t *testing.T) {
 	
 	mockData := []*finance.ChartBar{
 		{
-			Timestamp: 1617321600, // 2021-04-02
+			Timestamp: 1617321600 + 3600, // 2021-04-02 01:00:00 UTC
 			Open:      decimal.NewFromFloat(100.0),
 		},
 		{
-			Timestamp: 1617408000, // 2021-04-03
+			Timestamp: 1617408000 + 3600, // 2021-04-03 01:00:00 UTC
 			Open:      decimal.NewFromFloat(101.0),
 		},
 	}
 	
-	// Filtering logic that should be in main
+	// Filtering logic that is in main
 	var filtered []*finance.ChartBar
 	for _, bar := range mockData {
 		barDate := time.Unix(int64(bar.Timestamp), 0).UTC()
+		truncatedBarDate := time.Date(barDate.Year(), barDate.Month(), barDate.Day(), 0, 0, 0, 0, time.UTC)
 		// We want strictly AFTER latest
-		if barDate.After(latest) {
-			filtered = append(filtered, bar)
+		if !latest.IsZero() && (truncatedBarDate.Before(latest) || truncatedBarDate.Equal(latest)) {
+			continue
 		}
+		filtered = append(filtered, bar)
 	}
 	
 	if len(filtered) != 1 {
 		t.Errorf("expected 1 bar, got %d", len(filtered))
 	}
-	if filtered[0].Timestamp != 1617408000 {
-		t.Errorf("expected timestamp 1617408000, got %d", filtered[0].Timestamp)
+	if filtered[0].Timestamp != 1617408000 + 3600 {
+		t.Errorf("expected timestamp 1617411600, got %d", filtered[0].Timestamp)
 	}
 }

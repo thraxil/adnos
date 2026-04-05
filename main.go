@@ -5,8 +5,10 @@ import (
 	"encoding/csv"
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -190,14 +192,94 @@ func ReadTickers(filename string) ([]string, error) {
 	return tickers, nil
 }
 
+func DedupeExistingFiles(dir string) error {
+	files, err := filepath.Glob(filepath.Join(dir, "*.csv"))
+	if err != nil {
+		return err
+	}
+
+	for _, file := range files {
+		fmt.Printf("Deduplicating %s...\n", file)
+		if err := dedupeFile(file); err != nil {
+			fmt.Printf("  Error deduplicating %s: %v\n", file, err)
+		}
+	}
+	return nil
+}
+
+func dedupeFile(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+
+	reader := csv.NewReader(f)
+	header, err := reader.Read()
+	if err != nil {
+		f.Close()
+		if err == io.EOF {
+			return nil // Empty file
+		}
+		return err
+	}
+
+	var rows [][]string
+	seen := make(map[string]bool)
+
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			f.Close()
+			return err
+		}
+
+		date := record[0]
+		if !seen[date] {
+			rows = append(rows, record)
+			seen[date] = true
+		} else {
+			fmt.Printf("  Found duplicate for date: %s\n", date)
+		}
+	}
+	f.Close()
+
+	// Write back
+	f, err = os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	writer := csv.NewWriter(f)
+	defer writer.Flush()
+
+	if err := writer.Write(header); err != nil {
+		return err
+	}
+	return writer.WriteAll(rows)
+}
+
 func main() {
 	var startStr, endStr string
+	var dedupeOnly bool
 	flag.StringVar(&startStr, "start", "", "Start date (YYYY-MM-DD)")
 	flag.StringVar(&endStr, "end", "", "End date (YYYY-MM-DD, optional, defaults to now)")
+	flag.BoolVar(&dedupeOnly, "dedupe", false, "Deduplicate existing CSV files and exit")
 	flag.Parse()
 
+	if dedupeOnly {
+		if err := DedupeExistingFiles("data"); err != nil {
+			fmt.Printf("Error during deduplication: %v\n", err)
+			os.Exit(1)
+		}
+		return
+	}
+
 	if startStr == "" {
-		fmt.Println("Usage: program -start YYYY-MM-DD [-end YYYY-MM-DD] <tickers_file>")
+		fmt.Println("Usage: program -start YYYY-MM-DD [-end YYYY-MM-DD] [-dedupe] <tickers_file>")
 		os.Exit(1)
 	}
 
@@ -254,9 +336,10 @@ func main() {
 		var newData []*finance.ChartBar
 		for _, bar := range data {
 			barDate := time.Unix(int64(bar.Timestamp), 0).UTC()
+			// Truncate to midnight for comparison to avoid duplicates for the same day
+			truncatedBarDate := time.Date(barDate.Year(), barDate.Month(), barDate.Day(), 0, 0, 0, 0, time.UTC)
 			// Only include if it is strictly after the latest date in our file.
-			// Dates from Parse("2006-01-02") are midnight UTC.
-			if !latest.IsZero() && (barDate.Before(latest) || barDate.Equal(latest)) {
+			if !latest.IsZero() && (truncatedBarDate.Before(latest) || truncatedBarDate.Equal(latest)) {
 				continue
 			}
 			newData = append(newData, bar)
