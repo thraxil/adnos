@@ -3,7 +3,6 @@ adnos
 
 # Local configuration/secrets
 .env
-.envrc
 
 # Direnv
 .direnv/
