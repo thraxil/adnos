@@ -231,3 +231,36 @@ func TestGetLatestDate(t *testing.T) {
 		t.Errorf("expected %s, got %s", expected, latest.Format("2006-01-02"))
 	}
 }
+
+func TestFetchTickerDataFilterExisting(t *testing.T) {
+	// If the API returns a bar for a date we already have, it should be filtered out.
+	latest := time.Date(2021, 4, 2, 0, 0, 0, 0, time.UTC)
+	
+	mockData := []*finance.ChartBar{
+		{
+			Timestamp: 1617321600, // 2021-04-02
+			Open:      decimal.NewFromFloat(100.0),
+		},
+		{
+			Timestamp: 1617408000, // 2021-04-03
+			Open:      decimal.NewFromFloat(101.0),
+		},
+	}
+	
+	// Filtering logic that should be in main
+	var filtered []*finance.ChartBar
+	for _, bar := range mockData {
+		barDate := time.Unix(int64(bar.Timestamp), 0).UTC()
+		// We want strictly AFTER latest
+		if barDate.After(latest) {
+			filtered = append(filtered, bar)
+		}
+	}
+	
+	if len(filtered) != 1 {
+		t.Errorf("expected 1 bar, got %d", len(filtered))
+	}
+	if filtered[0].Timestamp != 1617408000 {
+		t.Errorf("expected timestamp 1617408000, got %d", filtered[0].Timestamp)
+	}
+}

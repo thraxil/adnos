@@ -251,12 +251,23 @@ func main() {
 			continue
 		}
 
-		if len(data) == 0 {
-			fmt.Printf("No new data found for %s\n", ticker)
+		var newData []*finance.ChartBar
+		for _, bar := range data {
+			barDate := time.Unix(int64(bar.Timestamp), 0).UTC()
+			// Only include if it is strictly after the latest date in our file.
+			// Dates from Parse("2006-01-02") are midnight UTC.
+			if !latest.IsZero() && (barDate.Before(latest) || barDate.Equal(latest)) {
+				continue
+			}
+			newData = append(newData, bar)
+		}
+
+		if len(newData) == 0 {
+			fmt.Printf("No new data found for %s after filtering\n", ticker)
 			continue
 		}
 
-		err = WriteToCSV("data", ticker, data)
+		err = WriteToCSV("data", ticker, newData)
 		if err != nil {
 			fmt.Printf("Error writing CSV for %s: %v\n", ticker, err)
 			continue
