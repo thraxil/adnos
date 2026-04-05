@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -262,6 +263,30 @@ func dedupeFile(path string) error {
 	return writer.WriteAll(rows)
 }
 
+func formatFinanceError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	var yfErr *finance.YfinError
+	if errors.As(err, &yfErr) {
+		return fmt.Sprintf("Yahoo API Error (Code: %s, Description: %s)", yfErr.Code, yfErr.Description)
+	}
+
+	errStr := err.Error()
+	if strings.Contains(errStr, "remote-error") {
+		// The library returns errors like "code: remote-error, detail: status: 401..."
+		// We can try to make it prettier.
+		return fmt.Sprintf("Remote API Error: %s", strings.Replace(errStr, "code: remote-error, detail: ", "", 1))
+	}
+
+	if strings.Contains(strings.ToLower(errStr), "not found") {
+		return fmt.Sprintf("Ticker not found or invalid symbol: %v", err)
+	}
+
+	return errStr
+}
+
 func main() {
 	var startStr, endStr string
 	var dedupeOnly bool
@@ -329,7 +354,8 @@ func main() {
 		fmt.Printf("Fetching data for %s from %s to %s...\n", ticker, currentStart.Format("2006-01-02"), end.Format("2006-01-02"))
 		data, err := FetchTickerData(d, ticker, currentStart, end)
 		if err != nil {
-			fmt.Printf("Error fetching data for %s: %v\n", ticker, err)
+			fmt.Printf("Error: FAILED to fetch data for ticker %s between %s and %s. Error detail: %v\n", 
+				ticker, currentStart.Format("2006-01-02"), end.Format("2006-01-02"), formatFinanceError(err))
 			continue
 		}
 
@@ -346,13 +372,13 @@ func main() {
 		}
 
 		if len(newData) == 0 {
-			fmt.Printf("No new data found for %s after filtering\n", ticker)
+			fmt.Printf("No new data found for %s after filtering (fetched %d bars total)\n", ticker, len(data))
 			continue
 		}
 
 		err = WriteToCSV("data", ticker, newData)
 		if err != nil {
-			fmt.Printf("Error writing CSV for %s: %v\n", ticker, err)
+			fmt.Printf("Error: FAILED to write new data to data/%s.csv. Error detail: %v\n", ticker, err)
 			continue
 		}
 	}
