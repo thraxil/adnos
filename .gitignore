@@ -1,0 +1,23 @@
+# Binary
+adnos
+
+# Local configuration/secrets
+.env
+.envrc
+
+# Direnv
+.direnv/
+
+# Go
+*.test
+*.out
+vendor/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
